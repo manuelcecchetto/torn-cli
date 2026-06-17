@@ -1,6 +1,6 @@
 # torn-cli examples
 
-These examples are safe starting points for humans and AI agents. They assume `torn` is on `PATH` and that keys were configured with `torn config set ...` or environment variables.
+These examples are safe starting points for humans and AI agents. They assume `torn` is on `PATH` and that keys were configured with `torn config set ...` or environment variables. After `cargo install`, add Cargo's bin directory to your shell if needed: `export PATH="$HOME/.cargo/bin:$PATH"` on macOS/Linux, or `%USERPROFILE%\.cargo\bin` in Windows `Path`.
 
 > Never commit real Torn or FFScouter keys. Use `.env.example` as the template.
 

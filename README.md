@@ -51,7 +51,24 @@ cd torn-cli
 cargo install --path . --locked
 ```
 
-Windows works too: install Rust with [`rustup-init.exe`](https://rustup.rs/), then run the same `cargo install` commands from PowerShell.
+Make sure Cargo's bin directory is on your `PATH` after install:
+
+```bash
+# macOS/Linux zsh/bash, current shell
+export PATH="$HOME/.cargo/bin:$PATH"
+
+# persist for zsh
+echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+
+# verify
+which torn
+torn --help
+```
+
+You can always run the binary directly as `~/.cargo/bin/torn` if your shell has not reloaded yet.
+
+Windows works too: install Rust with [`rustup-init.exe`](https://rustup.rs/), then run the same `cargo install` commands from PowerShell. If `torn` is not found after install, add `%USERPROFILE%\.cargo\bin` to your user `Path` environment variable and reopen PowerShell.
 
 For development:
 
