@@ -1,0 +1,50 @@
+# Local secrets and environment files
+.env
+.env.*
+!.env.example
+!docs/**/.env.example
+
+# Local Torn CLI runtime data
+.torn-cli/
+.cache/
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+
+# Rust build output
+/target/
+
+# Logs, traces, and crash/debug output
+*.log
+*.trace
+*.dump
+crash-*.json
+
+# Test and coverage artifacts
+/coverage/
+/tarpaulin-report.html
+/junit.xml
+package-files.txt
+
+# Editor/OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Node/npm artifacts in case packaging helpers are added later
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Release artifacts
+/dist/
+*.tar.gz
+*.tgz
+*.zip

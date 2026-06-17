@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test
+      - name: Package privacy check
+        run: |
+          cargo package --allow-dirty --no-verify --list > package-files.txt
+          bad_env_files="$(awk -F/ '{ base=$NF; if (base ~ /^\\.env/ && base != ".env.example") print }' package-files.txt)"
+          if [ -n "$bad_env_files" ]; then
+            echo "Unexpected env files in package:" >&2
+            echo "$bad_env_files" >&2
+            exit 1
+          fi

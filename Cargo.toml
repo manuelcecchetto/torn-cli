@@ -1,0 +1,59 @@
+[package]
+name = "torn-cli"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Manuel Cecchetto"]
+description = "A privacy-conscious CLI/TUI client for Torn API v2 and FFScouter"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/manuelcecchetto/torn-cli"
+homepage = "https://github.com/manuelcecchetto/torn-cli"
+documentation = "https://github.com/manuelcecchetto/torn-cli/tree/main/docs"
+keywords = ["torn", "cli", "tui", "api", "ffscouter"]
+categories = ["command-line-utilities"]
+include = [
+  "/Cargo.toml",
+  "/Cargo.lock",
+  "/LICENSE",
+  "/README.md",
+  "/SECURITY.md",
+  "/CONTRIBUTING.md",
+  "/.env.example",
+  "/src/**",
+  "/assets/**",
+  "/scripts/**",
+  "/examples/**",
+  "/docs/**",
+  "/.claude/skills/**",
+]
+
+[lib]
+name = "torn_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "torn"
+path = "src/main.rs"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap = { version = "4.5", features = ["derive"] }
+crossterm = "0.28"
+directories = "5"
+dotenvy = "0.15"
+hex = "0.4"
+humantime = "2"
+ratatui = "0.29"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rpassword = "7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+toml = "0.8"
+url = "2"
+
+[dev-dependencies]
+tempfile = "3"

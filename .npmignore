@@ -1,0 +1,27 @@
+# Defensive npm package ignore list. The project is a Rust CLI, but this protects
+# future npm wrapper/package experiments from publishing local secrets or build junk.
+.env
+.env.*
+!.env.example
+!docs/**/.env.example
+
+.git/
+.github/
+target/
+node_modules/
+coverage/
+dist/
+*.log
+*.trace
+*.dump
+crash-*.json
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

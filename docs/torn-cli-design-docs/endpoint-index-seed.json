@@ -1,0 +1,52 @@
+{
+  "services": {
+    "torn": {
+      "base_url": "https://api.torn.com/v2",
+      "auth": "Authorization: ApiKey <TORN_API_KEY>",
+      "groups": [
+        "user",
+        "faction",
+        "torn",
+        "market",
+        "company",
+        "racing",
+        "forum",
+        "property",
+        "key"
+      ],
+      "mvp_endpoints": [
+        { "method": "GET", "path": "/user/lookup", "description": "Discover available user selections" },
+        { "method": "GET", "path": "/user/basic", "description": "Basic user profile" },
+        { "method": "GET", "path": "/user?selections=bars", "description": "Live resource bars" },
+        { "method": "GET", "path": "/user/inventory", "description": "User inventory" },
+        { "method": "GET", "path": "/faction/basic", "description": "Faction basic data" },
+        { "method": "GET", "path": "/faction/members", "description": "Faction member list" },
+        { "method": "GET", "path": "/faction/attacksfull", "description": "Detailed faction attacks" },
+        { "method": "GET", "path": "/torn/items", "description": "Torn item reference" },
+        { "method": "GET", "path": "/torn/stocks", "description": "Torn stock reference" },
+        { "method": "GET", "path": "/market/itemmarket", "description": "Item market data" },
+        { "method": "GET", "path": "/key/info", "description": "API key information" }
+      ]
+    },
+    "ffscouter": {
+      "base_url": "https://ffscouter.com/api/v1",
+      "auth": "query parameter key=<FFSCOUTER_API_KEY>",
+      "groups": [
+        "stats",
+        "travel",
+        "key",
+        "targets",
+        "announcements"
+      ],
+      "mvp_endpoints": [
+        { "method": "GET", "path": "/check-key", "description": "Validate API key" },
+        { "method": "GET", "path": "/get-stats", "description": "Current stats snapshot" },
+        { "method": "GET", "path": "/get-stats-history", "description": "Historical stats series" },
+        { "method": "GET", "path": "/player-flights", "description": "Player flight/travel data" },
+        { "method": "POST", "path": "/register", "description": "Register key/user mapping" },
+        { "method": "GET", "path": "/get-targets", "description": "Targets for scouting workflows" },
+        { "method": "GET", "path": "/announcements", "description": "Announcement feed" }
+      ]
+    }
+  }
+}
