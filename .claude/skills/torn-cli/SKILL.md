@@ -44,33 +44,33 @@ Use `torn config set torn-api-key` and `torn config set ffscouter-api-key` for i
 Machine-readable:
 
 ```bash
-torn api user basic --id <player-id> --json
+torn api user basic --id PLAYER_ID --json
 ```
 
 Human summary:
 
 ```bash
-torn api user basic --id <player-id> --pretty
+torn api user basic --id PLAYER_ID --pretty
 ```
 
-Monitor for hospital release:
+Monitor for hospital release interactively:
 
 ```bash
-timeout 2m torn --watch 30s --pretty api user basic --id <player-id>
+torn --watch 30s --pretty api user basic --id PLAYER_ID
 ```
 
-If `timeout` is unavailable on macOS, use a short background run and kill it, or tell the user how to run it interactively.
+For bounded automation on GNU/Linux, use `timeout`. On Windows PowerShell, prefer one-off polling from the agent or ask the user to run the watch interactively and stop it with Ctrl+C.
 
 ### Summarize faction members
 
 ```bash
-torn api faction members --id <faction-id> --table
+torn api faction members --id FACTION_ID --table
 ```
 
 ### Check FFScouter stats
 
 ```bash
-torn ff stats --target <player-id> --json
+torn ff stats --target PLAYER_ID --json
 ```
 
 ### Find targets
@@ -111,4 +111,4 @@ cargo test --all
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-When adding docs or examples, keep placeholders like `<player-id>` and never include real keys.
+When adding docs or examples, use copy/paste-safe placeholders like `PLAYER_ID` instead of angle brackets, and never include real keys.

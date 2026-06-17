@@ -9,10 +9,10 @@ You can use the `torn` CLI to inspect Torn API v2 and FFScouter data. Safety rul
 - Prefer `--json` for machine parsing, `--pretty` for human summaries, and `--table` for compact watch output.
 - For watch-style commands, use bounded shell timeouts unless the user explicitly wants a long-running monitor.
 
-Task: Check player <player-id>, summarize their level/status/last action, and if they are in hospital estimate when they leave.
+Task: Check player PLAYER_ID, summarize their level/status/last action, and if they are in hospital estimate when they leave.
 
 Suggested command:
-torn api user basic --id <player-id> --json
+torn api user basic --id PLAYER_ID --json
 ```
 
 For reusable agent behavior, install or rely on the project skill at `.claude/skills/torn-cli/SKILL.md`.

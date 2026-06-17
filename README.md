@@ -51,6 +51,8 @@ cd torn-cli
 cargo install --path . --locked
 ```
 
+Windows works too: install Rust with [`rustup-init.exe`](https://rustup.rs/), then run the same `cargo install` commands from PowerShell.
+
 For development:
 
 ```bash
@@ -76,14 +78,14 @@ torn endpoints search attacks
 
 # Torn API shortcuts and raw paths
 torn api user basic --pretty
-torn api user basic --id <player-id> --table
+torn api user basic --id PLAYER_ID --table
 torn api get /user/basic --json
-torn api faction members --id <faction-id> --table
-torn api market itemmarket --id <item-id> --pretty
+torn api faction members --id FACTION_ID --table
+torn api market itemmarket --id ITEM_ID --pretty
 
 # FFScouter
 torn ff check-key --pretty
-torn ff stats --target <player-id> --pretty
+torn ff stats --target PLAYER_ID --pretty
 torn ff targets --preset respect --limit 10 --json
 ```
 
@@ -92,8 +94,8 @@ torn ff targets --preset respect --limit 10 --json
 `--watch [interval]` repeats GET requests until interrupted. It bypasses stale cache by default and prefixes every rendered line with a colored local-time marker.
 
 ```bash
-torn --watch 30s --pretty api user basic --id <player-id>
-torn --watch 10s --table api user profile --id <player-id>
+torn --watch 30s --pretty api user basic --id PLAYER_ID
+torn --watch 10s --table api user profile --id PLAYER_ID
 ```
 
 Example shape:
@@ -120,15 +122,23 @@ Use `--json` for machine parsing and `--pretty` for human summaries. See [`docs/
 
 ## Examples
 
-Ready-to-run examples live in [`examples/`](examples/):
+Ready-to-run examples live in [`examples/`](examples/). Bash/macOS/Linux/Git Bash users can run:
 
 ```bash
-./examples/watch-hospital.sh <player-id> 30s
-./examples/faction-members.sh <faction-id>
+./examples/watch-hospital.sh PLAYER_ID 30s
+./examples/faction-members.sh FACTION_ID
 ./examples/ffscouter-targets.sh respect 10
 ```
 
-The examples directory also includes an [`agent-brief.md`](examples/agent-brief.md) prompt for AI agents that need to use the CLI safely.
+Windows PowerShell users can run:
+
+```powershell
+.\examples\watch-hospital.ps1 -PlayerId PLAYER_ID -Interval 30s
+.\examples\faction-members.ps1 -FactionId FACTION_ID
+.\examples\ffscouter-targets.ps1 -Preset respect -Limit 10
+```
+
+Use the uppercase placeholders as values; don't paste angle-bracket placeholders into PowerShell/CMD. If PowerShell execution policy blocks `.ps1` scripts, run the raw `torn ...` command shown above or use `powershell -ExecutionPolicy Bypass -File .\examples\watch-hospital.ps1 -PlayerId PLAYER_ID`. The examples directory also includes an [`agent-brief.md`](examples/agent-brief.md) prompt for AI agents that need to use the CLI safely.
 
 ## AI Agent Skill
 
@@ -216,10 +226,10 @@ See [`docs/TORN_LOGS.md`](docs/TORN_LOGS.md) and [`docs/LOG_PRESETS.md`](docs/LO
 FFScouter is not just battle-stat lookup. `torn ff` wraps stats, stat history, premium flights/activity, target finder, hit calling, losses marketplace seller flows, registration/status, and announcements:
 
 ```bash
-torn ff stats --target <player-id>,<player-id>
-torn ff stats-history --target <player-id> --since 30d --limit 20
-torn ff activity player --target <player-id> --since 24h --bucket 900
-torn ff activity faction --faction <faction-id> --since 24h --bucket 3600
+torn ff stats --target PLAYER_ID,PLAYER_ID
+torn ff stats-history --target PLAYER_ID --since 30d --limit 20
+torn ff activity player --target PLAYER_ID --since 24h --bucket 900
+torn ff activity faction --faction FACTION_ID --since 24h --bucket 3600
 torn ff hits claims
 torn ff losses quote --quantity 10 --price-per-loss 300000
 ```
@@ -241,12 +251,12 @@ Shortcut access is available for all bundled Torn groups:
 
 ```bash
 torn api user basic
-torn api faction rankedwarreport --id <war-id>
-torn api torn items --id <item-id>
-torn api company employees --id <company-id>
-torn api racing race --id <race-id>
-torn api forum thread --id <thread-id>
-torn api property property --id <property-id>
+torn api faction rankedwarreport --id WAR_ID
+torn api torn items --id ITEM_ID
+torn api company employees --id COMPANY_ID
+torn api racing race --id RACE_ID
+torn api forum thread --id THREAD_ID
+torn api property property --id PROPERTY_ID
 torn api key info
 ```
 
