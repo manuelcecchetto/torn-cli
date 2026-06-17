@@ -1,5 +1,4 @@
 <div align="center">
-  <img src="assets/readme/torn-logo-official.png" alt="Torn logo" width="220">
 
   # torn-cli
 
