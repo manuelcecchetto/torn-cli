@@ -87,11 +87,14 @@ Only use full-access log commands when the user asks for account-log analysis:
 torn logs analyze --since 7d --group-by category --table
 ```
 
-For content searches, keep windows and filters tight:
+For content searches, keep windows and filters tight. Prefer server-side `--log`/`--cat` filters when the log type is known, because `--contains` is a client-side filter over fetched logs:
 
 ```bash
 torn logs analyze --since 24h --contains xanax --group-by type --json
+torn logs analyze --since 3d --log 2290,2291 --group-by type --json
 ```
+
+`--since`-bounded log windows auto-page by default; use `--max-pages` only when you intentionally want a hard cap.
 
 ## Output handling
 

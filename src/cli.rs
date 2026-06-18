@@ -761,8 +761,11 @@ pub struct LogsFetchArgs {
     pub target: Option<String>,
     #[arg(long, default_value_t = 100)]
     pub limit: u32,
-    #[arg(long = "max-pages", default_value_t = 1)]
-    pub max_pages: usize,
+    #[arg(
+        long = "max-pages",
+        help = "Maximum log pages to fetch. Defaults to all pages for --since-bounded windows, or 1 page when no lower bound is provided."
+    )]
+    pub max_pages: Option<usize>,
     #[arg(short = 'p', long = "param", value_name = "NAME=VALUE")]
     pub extra_params: Vec<QueryParam>,
 }
@@ -776,7 +779,7 @@ impl Default for LogsFetchArgs {
             category: None,
             target: None,
             limit: 100,
-            max_pages: 1,
+            max_pages: None,
             extra_params: Vec::new(),
         }
     }
@@ -1657,7 +1660,7 @@ fn logs_preset_analyze_spec(
             category: None,
             target: args.target.or(preset.definition.target.clone()),
             limit: args.limit.or(preset.definition.limit).unwrap_or(100),
-            max_pages: args.max_pages.or(preset.definition.max_pages).unwrap_or(1),
+            max_pages: args.max_pages.or(preset.definition.max_pages),
             extra_params: args.extra_params,
         },
         categories,

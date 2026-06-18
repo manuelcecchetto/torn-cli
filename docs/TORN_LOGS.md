@@ -43,7 +43,10 @@ Server-side filters sent to Torn:
 - `--log <id[,id]>` -> `log`
 - `--cat <id>` / `--category <id>` -> `cat`
 - `--target <user_id>` -> `target`
-- `--limit <n>` and `--max-pages <n>` for page/window size
+- `--limit <n>` for page size
+- `--max-pages <n>` to cap pagination manually. If omitted, `--since`-bounded windows auto-page until Torn returns no continuation link, while queries without a lower bound fetch one page by default.
+
+For `/user/log`, Torn exposes older pages through `_metadata.links.prev` for normal newest-first windows. `torn-cli` follows that continuation and deduplicates boundary log ids across pages.
 
 Client-side filters applied after fetch:
 
@@ -66,6 +69,7 @@ Client-side filters applied after fetch:
 Analysis output includes:
 
 - total fetched logs and filtered logs
+- pagination metadata: pages fetched, resolved max pages, whether results were truncated, and which continuation direction was followed
 - group count, first/last timestamps, categories, log type ids, data keys, params keys, and example ids
 - observed field shapes per log type: all seen `data` keys, `params` keys, and JSON value types
 - optional `--include-raw` raw filtered logs in JSON output

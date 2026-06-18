@@ -35,7 +35,7 @@ User presets are stored in `config.toml` under `[logs.presets.<name>]`. Names ar
 - Presets use the same permission preflight as `torn logs fetch` and `torn logs analyze`.
 - A preset with one category calls `/user/log?cat=<id>`.
 - A preset with multiple categories fans out one bounded request per category, then de-duplicates by log entry id.
-- `--limit` and `--max-pages` apply per category in multi-category presets.
+- `--limit` applies per category in multi-category presets; `--max-pages` is optional and caps each category when set.
 - `--log`, `--cat`, `--contains`, `--data-key`, and `--param-key` passed at run time are merged with the preset definition.
 - Output supports the global `--json`, `--pretty`, `--table`, and `--csv` modes.
 
@@ -73,7 +73,8 @@ contains = ["money"]
 group_by = "type"
 since = "30d"
 limit = 100
-max_pages = 1
+# Optional hard cap; omit to auto-page --since-bounded windows.
+max_pages = 10
 ```
 
 Available fields:
@@ -86,4 +87,4 @@ Available fields:
 - `param_keys`
 - `group_by`: `category`, `type`, `day`, `hour`, `target`, `data-key`, `param-key`
 - `since`, `to`, `target`
-- `limit`, `max_pages`
+- `limit`, `max_pages` (optional hard cap)

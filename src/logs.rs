@@ -17,6 +17,8 @@ const OFFICIAL_OPENAPI_URL: &str = "https://www.torn.com/swagger/openapi.json";
 const PLAYGROUND_USER_LOG_URL: &str = "https://tornapi.tornplayground.eu/user/log";
 const PLAYGROUND_LOGTYPES_URL: &str = "https://tornapi.tornplayground.eu/torn/logtypes";
 const PLAYGROUND_LOGCATEGORIES_URL: &str = "https://tornapi.tornplayground.eu/torn/logcategories";
+const DEFAULT_BOUNDED_LOG_MAX_PAGES: usize = 1_000;
+const DEFAULT_UNBOUNDED_LOG_MAX_PAGES: usize = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -52,7 +54,7 @@ pub struct LogsFetchSpec {
     pub category: Option<String>,
     pub target: Option<String>,
     pub limit: u32,
-    pub max_pages: usize,
+    pub max_pages: Option<usize>,
     pub extra_params: Vec<QueryParam>,
 }
 
@@ -111,6 +113,7 @@ pub struct LogAnalysis {
     pub total_logs: usize,
     pub filtered_logs: usize,
     pub query: LogQuerySummary,
+    pub pagination: LogPaginationSummary,
     pub group_by: LogGroupBy,
     pub groups: Vec<LogGroupSummary>,
     pub observed_shapes: Vec<ObservedLogShape>,
@@ -128,6 +131,15 @@ pub struct LogQuerySummary {
     pub target: Option<String>,
     pub limit: u32,
     pub max_pages: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogPaginationSummary {
+    pub pages_fetched: usize,
+    pub max_pages: usize,
+    pub truncated: bool,
+    pub continuation_link_seen: bool,
+    pub continuation_direction: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,6 +173,12 @@ pub struct LogCatalog {
     pub uncategorized_types: Vec<LogTypeInfo>,
     pub category_errors: Vec<String>,
     pub sources: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserLogsFetchResult {
+    pub entries: Vec<UserLogEntry>,
+    pub pagination: LogPaginationSummary,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -203,41 +221,121 @@ pub async fn fetch_user_logs(
     client: &ApiClient,
     spec: &LogsFetchSpec,
 ) -> Result<Vec<UserLogEntry>, AppError> {
+    Ok(fetch_user_logs_with_metadata(client, spec).await?.entries)
+}
+
+pub async fn fetch_user_logs_with_metadata(
+    client: &ApiClient,
+    spec: &LogsFetchSpec,
+) -> Result<UserLogsFetchResult, AppError> {
     let first = user_logs_request(spec)?;
-    let max_pages = spec.max_pages.max(1);
+    let max_pages = resolved_log_max_pages(spec)?;
     let mut current = first.clone();
     let mut entries = Vec::new();
+    let mut seen_entries = BTreeSet::new();
+    let mut seen_requests = BTreeSet::new();
+    let mut pages_fetched = 0;
+    let mut continuation_link_seen = false;
+    let mut continuation_direction = None;
+    let mut truncated = false;
 
-    for _ in 0..max_pages {
+    for page_index in 0..max_pages {
+        let request_fingerprint = request_fingerprint(&current);
+        if !seen_requests.insert(request_fingerprint) {
+            truncated = true;
+            break;
+        }
+
         let response = client.execute(current.clone()).await?;
-        if let Some(json) = &response.body_json {
-            entries.extend(parse_user_logs(json)?);
-            if let Some(next) = next_page_url(json) {
-                current = client.request_from_next_url(&first, &next)?;
-                continue;
+        pages_fetched += 1;
+        let Some(json) = &response.body_json else {
+            break;
+        };
+
+        for entry in parse_user_logs(json)? {
+            if seen_entries.insert(entry.id.clone()) {
+                entries.push(entry);
             }
         }
-        break;
+
+        let Some(continuation) = user_logs_continuation_url(json) else {
+            break;
+        };
+        continuation_link_seen = true;
+        continuation_direction.get_or_insert_with(|| continuation.direction.to_string());
+
+        if page_index + 1 >= max_pages {
+            truncated = true;
+            break;
+        }
+
+        current = client.request_from_next_url(&first, &continuation.url)?;
     }
 
-    Ok(entries)
+    Ok(UserLogsFetchResult {
+        entries,
+        pagination: LogPaginationSummary {
+            pages_fetched,
+            max_pages,
+            truncated,
+            continuation_link_seen,
+            continuation_direction,
+        },
+    })
 }
 
 pub async fn fetch_user_logs_for_preset(
     client: &ApiClient,
     spec: &LogsPresetAnalyzeSpec,
 ) -> Result<Vec<UserLogEntry>, AppError> {
+    Ok(fetch_user_logs_for_preset_with_metadata(client, spec)
+        .await?
+        .entries)
+}
+
+pub async fn fetch_user_logs_for_preset_with_metadata(
+    client: &ApiClient,
+    spec: &LogsPresetAnalyzeSpec,
+) -> Result<UserLogsFetchResult, AppError> {
     let mut seen = BTreeSet::new();
     let mut entries = Vec::new();
+    let mut pages_fetched = 0;
+    let mut max_pages = 0;
+    let mut truncated = false;
+    let mut continuation_link_seen = false;
+    let mut directions = BTreeSet::new();
+
     for fetch in preset_fetch_specs(spec) {
-        for entry in fetch_user_logs(client, &fetch).await? {
+        let result = fetch_user_logs_with_metadata(client, &fetch).await?;
+        pages_fetched += result.pagination.pages_fetched;
+        max_pages += result.pagination.max_pages;
+        truncated |= result.pagination.truncated;
+        continuation_link_seen |= result.pagination.continuation_link_seen;
+        if let Some(direction) = result.pagination.continuation_direction {
+            directions.insert(direction);
+        }
+        for entry in result.entries {
             if seen.insert(entry.id.clone()) {
                 entries.push(entry);
             }
         }
     }
     entries.sort_by_key(|entry| std::cmp::Reverse(entry.timestamp));
-    Ok(entries)
+
+    Ok(UserLogsFetchResult {
+        entries,
+        pagination: LogPaginationSummary {
+            pages_fetched,
+            max_pages,
+            truncated,
+            continuation_link_seen,
+            continuation_direction: match directions.len() {
+                0 => None,
+                1 => directions.into_iter().next(),
+                _ => Some("mixed".to_string()),
+            },
+        },
+    })
 }
 
 pub fn preset_fetch_specs(spec: &LogsPresetAnalyzeSpec) -> Vec<LogsFetchSpec> {
@@ -276,17 +374,18 @@ pub async fn analyze_user_logs(
     client: &ApiClient,
     spec: &LogsAnalyzeSpec,
 ) -> Result<LogAnalysis, AppError> {
-    let logs = fetch_user_logs(client, &spec.fetch).await?;
-    analyze_log_entries(logs, spec)
+    let result = fetch_user_logs_with_metadata(client, &spec.fetch).await?;
+    analyze_log_entries(result.entries, result.pagination, spec)
 }
 
 pub async fn analyze_user_logs_with_preset(
     client: &ApiClient,
     spec: &LogsPresetAnalyzeSpec,
 ) -> Result<LogAnalysis, AppError> {
-    let logs = fetch_user_logs_for_preset(client, spec).await?;
+    let result = fetch_user_logs_for_preset_with_metadata(client, spec).await?;
     analyze_log_entries(
-        logs,
+        result.entries,
+        result.pagination,
         &LogsAnalyzeSpec {
             fetch: preset_summary_fetch_spec(spec),
             group_by: spec.group_by,
@@ -301,6 +400,7 @@ pub async fn analyze_user_logs_with_preset(
 
 fn analyze_log_entries(
     logs: Vec<UserLogEntry>,
+    pagination: LogPaginationSummary,
     spec: &LogsAnalyzeSpec,
 ) -> Result<LogAnalysis, AppError> {
     let total_logs = logs.len();
@@ -317,6 +417,7 @@ fn analyze_log_entries(
         total_logs,
         filtered_logs: filtered.len(),
         query,
+        pagination,
         group_by: spec.group_by,
         groups,
         observed_shapes,
@@ -450,8 +551,34 @@ pub fn query_summary(spec: &LogsFetchSpec) -> Result<LogQuerySummary, AppError> 
         category: spec.category.clone(),
         target: spec.target.clone(),
         limit: spec.limit,
-        max_pages: spec.max_pages,
+        max_pages: resolved_log_max_pages(spec)?,
     })
+}
+
+pub fn resolved_log_max_pages(spec: &LogsFetchSpec) -> Result<usize, AppError> {
+    let max_pages = spec.max_pages.unwrap_or_else(|| {
+        if spec.since.is_some() {
+            DEFAULT_BOUNDED_LOG_MAX_PAGES
+        } else {
+            DEFAULT_UNBOUNDED_LOG_MAX_PAGES
+        }
+    });
+    if max_pages == 0 {
+        return Err(AppError::InvalidRequest(
+            "log pagination max-pages must be greater than zero".to_string(),
+        ));
+    }
+    Ok(max_pages)
+}
+
+fn request_fingerprint(request: &ApiRequest) -> String {
+    let mut query = request
+        .query
+        .iter()
+        .map(|param| format!("{}={}", param.name, param.value))
+        .collect::<Vec<_>>();
+    query.sort();
+    format!("{} {}?{}", request.method, request.path, query.join("&"))
 }
 
 pub fn parse_timestamp_arg(input: &str, reference: DateTime<Utc>) -> Result<i64, AppError> {
@@ -799,12 +926,30 @@ fn parse_catalog_items(json: &Value, key: &str) -> Result<Vec<LogTypeInfo>, AppE
     }
 }
 
-fn next_page_url(value: &Value) -> Option<String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LogContinuation {
+    direction: &'static str,
+    url: String,
+}
+
+fn user_logs_continuation_url(value: &Value) -> Option<LogContinuation> {
+    // Torn's /user/log returns the newest page first for normal bounded windows.
+    // The older page inside the requested from/to window is exposed as `prev`,
+    // while `next` points back toward newer entries. Prefer `prev` so a
+    // `--since ... --to ...` log scan walks back until the lower bound is done.
+    pagination_link(value, "prev").or_else(|| pagination_link(value, "next"))
+}
+
+fn pagination_link(value: &Value, direction: &'static str) -> Option<LogContinuation> {
     value
-        .pointer("/_metadata/links/next")
+        .pointer(&format!("/_metadata/links/{direction}"))
         .and_then(Value::as_str)
-        .filter(|next| !next.trim().is_empty())
-        .map(str::to_string)
+        .map(str::trim)
+        .filter(|link| !link.is_empty())
+        .map(|link| LogContinuation {
+            direction,
+            url: link.to_string(),
+        })
 }
 
 fn research_sources() -> Vec<String> {
@@ -926,6 +1071,17 @@ fn render_analysis_table(analysis: &LogAnalysis) -> String {
     let mut lines = vec![
         format!("total_logs\t{}", analysis.total_logs),
         format!("filtered_logs\t{}", analysis.filtered_logs),
+        format!("pages_fetched\t{}", analysis.pagination.pages_fetched),
+        format!("max_pages\t{}", analysis.pagination.max_pages),
+        format!("truncated\t{}", analysis.pagination.truncated),
+        format!(
+            "continuation_direction\t{}",
+            analysis
+                .pagination
+                .continuation_direction
+                .as_deref()
+                .unwrap_or("")
+        ),
         format!("group_by\t{:?}", analysis.group_by),
         "".to_string(),
         "GROUPS".to_string(),
@@ -1170,6 +1326,81 @@ mod tests {
         assert_eq!(
             parse_timestamp_arg("2023-11-14", reference).unwrap(),
             1_699_920_000
+        );
+    }
+
+    #[test]
+    fn bounded_log_queries_auto_page_by_default() {
+        let bounded = LogsFetchSpec {
+            since: Some("3d".to_string()),
+            to: Some("now".to_string()),
+            log_ids: Vec::new(),
+            category: None,
+            target: None,
+            limit: 100,
+            max_pages: None,
+            extra_params: Vec::new(),
+        };
+        assert_eq!(
+            resolved_log_max_pages(&bounded).unwrap(),
+            DEFAULT_BOUNDED_LOG_MAX_PAGES
+        );
+
+        let unbounded = LogsFetchSpec {
+            since: None,
+            to: None,
+            max_pages: None,
+            ..bounded.clone()
+        };
+        assert_eq!(
+            resolved_log_max_pages(&unbounded).unwrap(),
+            DEFAULT_UNBOUNDED_LOG_MAX_PAGES
+        );
+
+        let upper_bound_only = LogsFetchSpec {
+            since: None,
+            to: Some("now".to_string()),
+            max_pages: None,
+            ..bounded
+        };
+        assert_eq!(
+            resolved_log_max_pages(&upper_bound_only).unwrap(),
+            DEFAULT_UNBOUNDED_LOG_MAX_PAGES
+        );
+    }
+
+    #[test]
+    fn user_log_continuation_prefers_prev_over_next() {
+        let continuation = user_logs_continuation_url(&json!({
+            "_metadata": {
+                "links": {
+                    "next": "https://api.torn.com/v2/user/log?from=200",
+                    "prev": "https://api.torn.com/v2/user/log?to=100"
+                }
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(continuation.direction, "prev");
+        assert_eq!(continuation.url, "https://api.torn.com/v2/user/log?to=100");
+    }
+
+    #[test]
+    fn user_log_continuation_falls_back_to_next() {
+        let continuation = user_logs_continuation_url(&json!({
+            "_metadata": {
+                "links": {
+                    "next": "https://api.torn.com/v2/user/log?from=200",
+                    "prev": null
+                }
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(continuation.direction, "next");
+        assert_eq!(
+            continuation.url,
+            "https://api.torn.com/v2/user/log?from=200"
         );
     }
 
