@@ -132,6 +132,8 @@ Example shape:
 --raw               raw API body
 --table             compact table/key-value output when shape allows
 --csv               CSV output when shape allows
+--all-pages         follow `_metadata.links.next` for GET endpoints and merge JSON array pages
+--page-limit N      maximum pages for `--all-pages`; default 100
 --watch [interval]  repeat GET requests until interrupted; default interval 30s
 ```
 
@@ -261,6 +263,7 @@ Generic raw access works for current and future Torn paths:
 torn api get /user/basic
 torn api get '/user?selections=basic,bars'
 torn api get /faction/members --param striptags=false
+torn --all-pages api faction attacks --from 1781964000 --to 1782012665 --sort ASC --limit 100 --json
 torn api post /future/path --body-file payload.json
 ```
 

@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     io::{IsTerminal, Read, Write},
     path::PathBuf,
     time::Duration,
@@ -8,11 +8,13 @@ use std::{
 use chrono::{Local, Utc};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use crossterm::style::{Color, Stylize, style};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
+
+const DEFAULT_API_PAGE_LIMIT: usize = 100;
 
 use crate::{
     cache::CachePolicy,
-    client::ApiClient,
+    client::{ApiClient, ApiResponse, PaginationOptions},
     config::{
         Config, ConfigLoadOptions, ConfigOverrides, ConfigSecretKey, remove_log_preset,
         update_config_secret, upsert_log_preset,
@@ -39,7 +41,7 @@ use crate::{
     name = "torn",
     version,
     about = "Privacy-conscious Torn API v2 CLI",
-    long_about = "Privacy-conscious Torn API v2 and FFScouter CLI.\n\nTorn auth uses Authorization: ApiKey <TORN_API_KEY>; keys are never added to Torn URLs. FFScouter requires key= query auth, and displayed URLs/logs/cache keys/response bodies redact configured secrets.\n\nExamples:\n  torn config check\n  torn config set torn-api-key\n  torn config tui\n  torn endpoints --service torn\n  torn endpoints search attacks\n  torn api get /user/basic --pretty\n  torn api user basic --table\n  torn --watch 30s --pretty api user basic --id 1844049\n  torn api faction rankedwarreport --id 12345 --pretty\n  torn api market itemmarket --id 206 --param bonus=Any\n  torn api user futureSelection --param foo=bar --raw\n  torn logs analyze --since 7d --to now --group-by category\n  torn logs catalog --pretty\n  torn ff check-key --pretty\n  torn ff stats --target 3747263 --json\n  torn ff activity player --target 3747263 --since 24h --bucket 900"
+    long_about = "Privacy-conscious Torn API v2 and FFScouter CLI.\n\nTorn auth uses Authorization: ApiKey <TORN_API_KEY>; keys are never added to Torn URLs. FFScouter requires key= query auth, and displayed URLs/logs/cache keys/response bodies redact configured secrets.\n\nExamples:\n  torn config check\n  torn config set torn-api-key\n  torn config tui\n  torn endpoints --service torn\n  torn endpoints search attacks\n  torn api get /user/basic --pretty\n  torn api user basic --table\n  torn --watch 30s --pretty api user basic --id 1844049\n  torn api faction rankedwarreport --id 12345 --pretty\n  torn --all-pages api faction attacks --from 1781964000 --to 1782012665 --sort ASC --limit 100 --json\n  torn api market itemmarket --id 206 --param bonus=Any\n  torn api user futureSelection --param foo=bar --raw\n  torn logs analyze --since 7d --to now --group-by category\n  torn logs catalog --pretty\n  torn ff check-key --pretty\n  torn ff stats --target 3747263 --json\n  torn ff activity player --target 3747263 --since 24h --bucket 900"
 )]
 pub struct Cli {
     #[command(flatten)]
@@ -108,6 +110,19 @@ pub struct GlobalOptions {
         help = "Repeat a GET request until interrupted; optional interval like 10s, 1m (default 30s). Watch bypasses cache."
     )]
     pub watch: Option<String>,
+    #[arg(
+        long,
+        global = true,
+        help = "Follow _metadata.links.next for GET requests and merge paginated JSON arrays before rendering"
+    )]
+    pub all_pages: bool,
+    #[arg(
+        long = "page-limit",
+        global = true,
+        value_name = "N",
+        help = "Maximum pages to fetch with --all-pages (default 100). Passing --page-limit implies --all-pages."
+    )]
+    pub page_limit: Option<usize>,
     #[arg(long, global = true, help = "Suppress non-essential logs")]
     pub quiet: bool,
     #[arg(short = 'v', long, global = true, action = clap::ArgAction::Count, help = "Verbose logs without secrets")]
@@ -1970,6 +1985,12 @@ async fn execute_and_print(
     config: Config,
 ) -> Result<(), AppError> {
     let watch_interval = watch_interval_from_global(global)?;
+    let paginate = pagination_options_from_global(global)?;
+    if watch_interval.is_some() && paginate.is_some() {
+        return Err(AppError::InvalidRequest(
+            "use either --watch or --all-pages, not both".to_string(),
+        ));
+    }
     let cache_policy = if watch_interval.is_some() {
         watch_cache_policy_from_global(global)?
     } else {
@@ -1987,7 +2008,12 @@ async fn execute_and_print(
     if let Some(interval) = watch_interval {
         execute_watch_and_print(&client, request, mode, interval).await
     } else {
-        let response = client.execute(request.clone()).await?;
+        let response = if let Some(options) = paginate {
+            let responses = client.execute_pages(request.clone(), options).await?;
+            merge_paginated_responses(responses)?
+        } else {
+            client.execute(request.clone()).await?
+        };
         let rendered = if global.pretty && std::io::stdout().is_terminal() {
             render_response_for_request_colored(&request, &response, mode)?
         } else {
@@ -1996,6 +2022,171 @@ async fn execute_and_print(
         println!("{rendered}");
         Ok(())
     }
+}
+
+fn pagination_options_from_global(
+    global: &GlobalOptions,
+) -> Result<Option<PaginationOptions>, AppError> {
+    if let Some(limit) = global.page_limit {
+        if limit == 0 {
+            return Err(AppError::InvalidRequest(
+                "--page-limit must be greater than zero".to_string(),
+            ));
+        }
+    }
+    if global.all_pages || global.page_limit.is_some() {
+        Ok(Some(PaginationOptions {
+            max_pages: Some(global.page_limit.unwrap_or(DEFAULT_API_PAGE_LIMIT)),
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+fn merge_paginated_responses(responses: Vec<ApiResponse>) -> Result<ApiResponse, AppError> {
+    let mut iter = responses.into_iter();
+    let Some(first) = iter.next() else {
+        return Err(AppError::Output(
+            "paginated request returned no responses".to_string(),
+        ));
+    };
+    let mut merged = first;
+    let mut pages_fetched = 1usize;
+    let mut json_pages = Vec::new();
+    let Some(first_json) = merged.body_json.take() else {
+        return Ok(merged);
+    };
+    json_pages.push(first_json);
+    for response in iter {
+        pages_fetched += 1;
+        if let Some(json) = response.body_json {
+            json_pages.push(json);
+        }
+        merged.elapsed_ms += response.elapsed_ms;
+        merged.from_cache &= response.from_cache;
+    }
+
+    let body_json = merge_json_pages(json_pages, pages_fetched);
+    merged.body_text = serde_json::to_string(&body_json)?;
+    merged.body_json = Some(body_json);
+    Ok(merged)
+}
+
+fn merge_json_pages(pages: Vec<Value>, pages_fetched: usize) -> Value {
+    if pages.len() == 1 {
+        let mut only = pages.into_iter().next().unwrap_or(Value::Null);
+        annotate_pagination_metadata(&mut only, pages_fetched);
+        return only;
+    }
+
+    if pages.iter().all(Value::is_array) {
+        let mut merged = Vec::new();
+        for page in pages {
+            if let Some(items) = page.as_array() {
+                append_json_array_dedup_by_id(&mut merged, items);
+            }
+        }
+        let mut object = Map::new();
+        object.insert("items".to_string(), Value::Array(merged));
+        object.insert(
+            "_metadata".to_string(),
+            pagination_metadata_value(pages_fetched),
+        );
+        return Value::Object(object);
+    }
+
+    if let Some(merged_object) = try_merge_object_pages(&pages, pages_fetched) {
+        return Value::Object(merged_object);
+    }
+
+    let mut object = Map::new();
+    object.insert("pages".to_string(), Value::Array(pages));
+    object.insert(
+        "_metadata".to_string(),
+        pagination_metadata_value(pages_fetched),
+    );
+    Value::Object(object)
+}
+
+fn try_merge_object_pages(pages: &[Value], pages_fetched: usize) -> Option<Map<String, Value>> {
+    let mut merged = Map::new();
+    let mut saw_mergeable_array = false;
+    for page in pages {
+        let object = page.as_object()?;
+        for (key, value) in object {
+            if key == "_metadata" {
+                continue;
+            }
+            match (merged.get_mut(key), value) {
+                (Some(Value::Array(existing)), Value::Array(items)) => {
+                    append_json_array_dedup_by_id(existing, items);
+                    saw_mergeable_array = true;
+                }
+                (None, Value::Array(items)) => {
+                    let mut cloned = Vec::new();
+                    append_json_array_dedup_by_id(&mut cloned, items);
+                    merged.insert(key.clone(), Value::Array(cloned));
+                    saw_mergeable_array = true;
+                }
+                (None, other) => {
+                    merged.insert(key.clone(), other.clone());
+                }
+                (Some(existing), other) if existing == other => {}
+                _ => return None,
+            }
+        }
+    }
+    if !saw_mergeable_array {
+        return None;
+    }
+    merged.insert(
+        "_metadata".to_string(),
+        pagination_metadata_value(pages_fetched),
+    );
+    Some(merged)
+}
+
+fn append_json_array_dedup_by_id(existing: &mut Vec<Value>, items: &[Value]) {
+    let mut seen_ids = existing
+        .iter()
+        .filter_map(json_item_id)
+        .collect::<HashSet<_>>();
+    for item in items {
+        if let Some(id) = json_item_id(item) {
+            if seen_ids.insert(id) {
+                existing.push(item.clone());
+            }
+        } else {
+            existing.push(item.clone());
+        }
+    }
+}
+
+fn json_item_id(value: &Value) -> Option<String> {
+    let id = value.as_object()?.get("id")?;
+    match id {
+        Value::String(id) => Some(id.clone()),
+        Value::Number(id) => Some(id.to_string()),
+        other => Some(other.to_string()),
+    }
+}
+
+fn annotate_pagination_metadata(value: &mut Value, pages_fetched: usize) {
+    if let Value::Object(object) = value {
+        let metadata = object
+            .entry("_metadata".to_string())
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Value::Object(metadata_object) = metadata {
+            metadata_object.insert(
+                "pagination".to_string(),
+                json!({ "pages_fetched": pages_fetched }),
+            );
+        }
+    }
+}
+
+fn pagination_metadata_value(pages_fetched: usize) -> Value {
+    json!({ "pagination": { "pages_fetched": pages_fetched } })
 }
 
 async fn execute_watch_and_print(
@@ -2287,6 +2478,84 @@ mod tests {
         .unwrap();
         assert_eq!(cli.global.watch.as_deref(), Some("5s"));
         assert!(cli.global.pretty);
+    }
+
+    #[test]
+    fn parses_all_pages_with_page_limit() {
+        let cli = Cli::try_parse_from([
+            "torn",
+            "--all-pages",
+            "--page-limit",
+            "25",
+            "api",
+            "faction",
+            "attacks",
+        ])
+        .unwrap();
+        assert!(cli.global.all_pages);
+        assert_eq!(cli.global.page_limit, Some(25));
+        assert_eq!(
+            pagination_options_from_global(&cli.global)
+                .unwrap()
+                .unwrap()
+                .max_pages,
+            Some(25)
+        );
+    }
+
+    #[test]
+    fn page_limit_implies_all_pages() {
+        let cli =
+            Cli::try_parse_from(["torn", "--page-limit", "3", "api", "user", "events"]).unwrap();
+        assert!(!cli.global.all_pages);
+        assert_eq!(
+            pagination_options_from_global(&cli.global)
+                .unwrap()
+                .unwrap()
+                .max_pages,
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn merges_paginated_top_level_arrays() {
+        let first = ApiResponse {
+            service: Service::Torn,
+            status: 200,
+            body_text: String::new(),
+            body_json: Some(json!({
+                "attacks": [{"id": 1}],
+                "_metadata": {"links": {"next": "https://api.torn.com/v2/faction/attacks?from=2"}}
+            })),
+            from_cache: true,
+            elapsed_ms: 10,
+        };
+        let second = ApiResponse {
+            service: Service::Torn,
+            status: 200,
+            body_text: String::new(),
+            body_json: Some(json!({
+                "attacks": [{"id": 1}, {"id": 2}],
+                "_metadata": {"links": {"next": null}}
+            })),
+            from_cache: true,
+            elapsed_ms: 20,
+        };
+
+        let merged = merge_paginated_responses(vec![first, second]).unwrap();
+        let body = merged.body_json.unwrap();
+        assert_eq!(body.pointer("/attacks/0/id"), Some(&json!(1)));
+        assert_eq!(body.pointer("/attacks/1/id"), Some(&json!(2)));
+        assert_eq!(
+            body.get("attacks").and_then(Value::as_array).unwrap().len(),
+            2
+        );
+        assert_eq!(
+            body.pointer("/_metadata/pagination/pages_fetched"),
+            Some(&json!(2))
+        );
+        assert_eq!(merged.elapsed_ms, 30);
+        assert!(merged.from_cache);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     fmt,
     sync::Arc,
     time::{Duration, Instant},
@@ -159,15 +159,35 @@ impl ApiClient {
         }
 
         let mut current = first.clone();
+        let mut seen_requests = HashSet::new();
+        seen_requests.insert(pagination_request_signature(&current));
         let mut responses = Vec::new();
         for _ in 0..max_pages {
             let response = self.execute(current.clone()).await?;
             let next = response.body_json.as_ref().and_then(next_page_url);
+            let empty_paginated_page = response
+                .body_json
+                .as_ref()
+                .and_then(page_has_paginated_items)
+                .is_some_and(|has_items| !has_items);
+            if empty_paginated_page && !responses.is_empty() {
+                return Ok(responses);
+            }
             responses.push(response);
+            if empty_paginated_page {
+                return Ok(responses);
+            }
             let Some(next) = next else {
                 return Ok(responses);
             };
-            current = self.request_from_next_url(&first, &next)?;
+            let next_request = self.request_from_next_url(&first, &next)?;
+            if pagination_reaches_requested_window_boundary(&first, &next_request) {
+                return Ok(responses);
+            }
+            if !seen_requests.insert(pagination_request_signature(&next_request)) {
+                return Ok(responses);
+            }
+            current = next_request;
         }
 
         Err(AppError::InvalidRequest(format!(
@@ -412,6 +432,64 @@ fn next_page_url(value: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+fn pagination_request_signature(request: &ApiRequest) -> String {
+    let query = request
+        .query
+        .iter()
+        .map(|param| format!("{}={}", param.name, param.value))
+        .collect::<Vec<_>>()
+        .join("&");
+    format!(
+        "{} {} {}?{}",
+        request.service, request.method, request.path, query
+    )
+}
+
+fn page_has_paginated_items(value: &Value) -> Option<bool> {
+    match value {
+        Value::Array(items) => Some(!items.is_empty()),
+        Value::Object(object) => {
+            let arrays = object
+                .iter()
+                .filter(|(key, _)| key.as_str() != "_metadata")
+                .filter_map(|(_, value)| value.as_array())
+                .collect::<Vec<_>>();
+            if arrays.is_empty() {
+                None
+            } else {
+                Some(arrays.iter().any(|items| !items.is_empty()))
+            }
+        }
+        _ => None,
+    }
+}
+
+fn pagination_reaches_requested_window_boundary(original: &ApiRequest, next: &ApiRequest) -> bool {
+    if let (Some(original_to), Some(next_from)) =
+        (query_i64(original, "to"), query_i64(next, "from"))
+    {
+        if next_from >= original_to {
+            return true;
+        }
+    }
+    if let (Some(original_from), Some(next_to)) =
+        (query_i64(original, "from"), query_i64(next, "to"))
+    {
+        if next_to <= original_from {
+            return true;
+        }
+    }
+    false
+}
+
+fn query_i64(request: &ApiRequest, name: &str) -> Option<i64> {
+    request
+        .query
+        .iter()
+        .find(|param| param.name.eq_ignore_ascii_case(name))
+        .and_then(|param| param.value.parse::<i64>().ok())
+}
+
 fn strip_base_path(base_url: &Url, path: &str) -> String {
     let base_path = base_url.path().trim_end_matches('/');
     if !base_path.is_empty() && path.starts_with(base_path) {
@@ -567,6 +645,63 @@ mod tests {
             .unwrap();
         assert_eq!(next.path, "/user/events");
         assert_eq!(next.query, vec![QueryParam::new("offset", "100")]);
+    }
+
+    #[test]
+    fn pagination_signature_changes_when_continuation_changes() {
+        let first = ApiRequest::get(Service::Torn, "/faction/attacks")
+            .unwrap()
+            .with_param("from", "100");
+        let second = ApiRequest::get(Service::Torn, "/faction/attacks")
+            .unwrap()
+            .with_param("from", "200");
+        assert_ne!(
+            pagination_request_signature(&first),
+            pagination_request_signature(&second)
+        );
+    }
+
+    #[test]
+    fn paginated_item_detection_ignores_metadata() {
+        assert_eq!(
+            page_has_paginated_items(&serde_json::json!({
+                "attacks": [],
+                "_metadata": {"links": {"next": "still-present"}}
+            })),
+            Some(false)
+        );
+        assert_eq!(
+            page_has_paginated_items(&serde_json::json!({"attacks": [{"id": 1}]})),
+            Some(true)
+        );
+        assert_eq!(
+            page_has_paginated_items(&serde_json::json!({"profile": {"name": "x"}})),
+            None
+        );
+    }
+
+    #[test]
+    fn pagination_stops_when_next_from_reaches_requested_to() {
+        let original = ApiRequest::get(Service::Torn, "/faction/attacks")
+            .unwrap()
+            .with_param("from", "100")
+            .with_param("to", "200");
+        let next_inside = ApiRequest::get(Service::Torn, "/faction/attacks")
+            .unwrap()
+            .with_param("from", "199")
+            .with_param("to", "200");
+        let next_outside = ApiRequest::get(Service::Torn, "/faction/attacks")
+            .unwrap()
+            .with_param("from", "200")
+            .with_param("to", "200");
+        assert!(!pagination_reaches_requested_window_boundary(
+            &original,
+            &next_inside
+        ));
+        assert!(pagination_reaches_requested_window_boundary(
+            &original,
+            &next_outside
+        ));
     }
 
     #[test]
